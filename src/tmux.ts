@@ -34,7 +34,9 @@ export function isTmuxAvailable(): boolean {
  */
 export function sessionExists(sessionName: string): boolean {
   try {
-    execSync(`tmux has-session -t "${sessionName}" 2>/dev/null`, { stdio: "pipe" });
+    execSync(`tmux has-session -t "${sessionName}" 2>/dev/null`, {
+      stdio: "pipe",
+    });
     return true;
   } catch {
     return false;
@@ -64,23 +66,35 @@ export function createSession(options: {
     // Build the codex command (interactive mode)
     // We use the interactive TUI so we can send messages later
     const codexArgs = [
-      `-c`, `model="${options.model}"`,
-      `-c`, `model_reasoning_effort="${options.reasoningEffort}"`,
-      `-c`, `skip_update_check=true`,
-      `-a`, `never`,
-      `-s`, options.sandbox,
+      `-c`,
+      `model="${options.model}"`,
+      `-c`,
+      `model_reasoning_effort="${options.reasoningEffort}"`,
+      `-c`,
+      `skip_update_check=true`,
+      `-a`,
+      `never`,
+      `-s`,
+      options.sandbox,
     ].join(" ");
 
     // Create tmux session with codex running
     // Use script to capture all output, and keep shell alive after codex exits
-    // This allows us to capture the output even after completion
-    // Create detached session that runs codex and stays open after it exits
-    // Using script to log all terminal output
-    const shellCmd = `script -q "${logFile}" codex ${codexArgs}; echo "\\n\\n[codex-agent: Session complete. Press Enter to close.]"; read`;
+    // macOS BSD script: script -q logfile command
+    // Linux util-linux script: script -q -c "command" logfile
+    const os = require("os");
+    const platform = os.platform();
+
+    let shellCmd: string;
+    if (platform === "darwin") {
+      shellCmd = `script -q "${logFile}" codex ${codexArgs}; echo "\\n\\n[codex-agent: Session complete. Press Enter to close.]"; read`;
+    } else {
+      shellCmd = `script -q -c "codex ${codexArgs}" "${logFile}"; echo "\\n\\n[codex-agent: Session complete. Press Enter to close.]"; read`;
+    }
 
     execSync(
       `tmux new-session -d -s "${sessionName}" -c "${options.cwd}" '${shellCmd}'`,
-      { stdio: "pipe", cwd: options.cwd }
+      { stdio: "pipe", cwd: options.cwd },
     );
 
     // Give codex a moment to initialize and show update prompt if any
@@ -101,16 +115,12 @@ export function createSession(options: {
     if (options.prompt.length < 5000) {
       // Send prompt directly for shorter prompts
       // Use separate send-keys calls for text and Enter to ensure Enter is processed
-      execSync(
-        `tmux send-keys -t "${sessionName}" '${promptContent}'`,
-        { stdio: "pipe" }
-      );
+      execSync(`tmux send-keys -t "${sessionName}" '${promptContent}'`, {
+        stdio: "pipe",
+      });
       // Small delay to let TUI process the text before Enter
       spawnSync("sleep", ["0.3"]);
-      execSync(
-        `tmux send-keys -t "${sessionName}" Enter`,
-        { stdio: "pipe" }
-      );
+      execSync(`tmux send-keys -t "${sessionName}" Enter`, { stdio: "pipe" });
     } else {
       // For long prompts, use load-buffer approach
       execSync(`tmux load-buffer "${promptFile}"`, { stdio: "pipe" });
@@ -174,7 +184,7 @@ export function sendControl(sessionName: string, key: string): boolean {
  */
 export function capturePane(
   sessionName: string,
-  options: { lines?: number; start?: number } = {}
+  options: { lines?: number; start?: number } = {},
 ): string | null {
   if (!sessionExists(sessionName)) {
     return null;
@@ -187,7 +197,10 @@ export function capturePane(
       cmd += ` -S ${options.start}`;
     }
 
-    const output = execSync(cmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    const output = execSync(cmd, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
 
     if (options.lines) {
       const allLines = output.split("\n");
@@ -210,10 +223,11 @@ export function captureFullHistory(sessionName: string): string | null {
 
   try {
     // Capture from start of history (-S -) to end
-    const output = execSync(
-      `tmux capture-pane -t "${sessionName}" -p -S -`,
-      { encoding: "utf-8", maxBuffer: 50 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] }
-    );
+    const output = execSync(`tmux capture-pane -t "${sessionName}" -p -S -`, {
+      encoding: "utf-8",
+      maxBuffer: 50 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     return output;
   } catch {
     return null;
@@ -243,7 +257,7 @@ export function listSessions(): TmuxSession[] {
   try {
     const output = execSync(
       `tmux list-sessions -F "#{session_name}|#{session_attached}|#{session_windows}|#{session_created}" 2>/dev/null`,
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
     );
 
     return output
@@ -283,7 +297,7 @@ export function isSessionActive(sessionName: string): boolean {
     // Check if the pane has a running process
     const pid = execSync(
       `tmux list-panes -t "${sessionName}" -F "#{pane_pid}"`,
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
     ).trim();
 
     if (!pid) return false;
@@ -303,7 +317,7 @@ export function isSessionActive(sessionName: string): boolean {
 export function watchSession(
   sessionName: string,
   callback: (content: string) => void,
-  intervalMs: number = 1000
+  intervalMs: number = 1000,
 ): { stop: () => void } {
   let lastContent = "";
   let running = true;
