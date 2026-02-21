@@ -2,6 +2,7 @@
 
 import { execSync, spawnSync } from "child_process";
 import { config } from "./config.ts";
+import { resolveNativeCommandPath } from "./env.ts";
 
 export interface TmuxSession {
   name: string;
@@ -56,6 +57,15 @@ export function createSession(options: {
 }): { sessionName: string; success: boolean; error?: string } {
   const sessionName = getSessionName(options.jobId);
   const logFile = `${config.jobsDir}/${options.jobId}.log`;
+  const codexPath = resolveNativeCommandPath("codex");
+
+  if (!codexPath) {
+    return {
+      sessionName,
+      success: false,
+      error: "codex CLI not found on PATH",
+    };
+  }
 
   // Create prompt file to avoid shell escaping issues
   const promptFile = `${config.jobsDir}/${options.jobId}.prompt`;
@@ -87,9 +97,9 @@ export function createSession(options: {
 
     let shellCmd: string;
     if (platform === "darwin") {
-      shellCmd = `script -q "${logFile}" codex ${codexArgs}; echo "\\n\\n[codex-agent: Session complete. Press Enter to close.]"; read`;
+      shellCmd = `script -q "${logFile}" "${codexPath}" ${codexArgs}; echo "\\n\\n[codex-agent: Session complete. Press Enter to close.]"; read`;
     } else {
-      shellCmd = `script -q -c "codex ${codexArgs}" "${logFile}"; echo "\\n\\n[codex-agent: Session complete. Press Enter to close.]"; read`;
+      shellCmd = `script -q -c "\\"${codexPath}\\" ${codexArgs}" "${logFile}"; echo "\\n\\n[codex-agent: Session complete. Press Enter to close.]"; read`;
     }
 
     execSync(

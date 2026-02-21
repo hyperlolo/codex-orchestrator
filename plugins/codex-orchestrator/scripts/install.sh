@@ -28,6 +28,39 @@ success() { echo -e "${GREEN}[ok]${NC} $1"; }
 warn() { echo -e "${YELLOW}[warn]${NC} $1"; }
 error() { echo -e "${RED}[error]${NC} $1"; }
 
+is_wsl() {
+  [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ] || grep -qi microsoft /proc/version 2>/dev/null
+}
+
+bootstrap_user_path() {
+  # Non-interactive shells (for example, "bash script.sh") may not load user PATH.
+  export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"
+
+  if [ -s "$HOME/.nvm/nvm.sh" ]; then
+    # shellcheck disable=SC1090
+    . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true
+    if command -v nvm &>/dev/null; then
+      nvm use --silent default >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+prefer_native_command() {
+  local cmd="$1"
+  local candidate
+
+  while IFS= read -r candidate; do
+    [ -z "$candidate" ] && continue
+    if is_wsl && [[ "$candidate" =~ ^/mnt/[a-zA-Z]/ ]]; then
+      continue
+    fi
+    echo "$candidate"
+    return 0
+  done < <(which -a "$cmd" 2>/dev/null | awk '!seen[$0]++')
+
+  return 1
+}
+
 # -------------------------------------------------------------------
 # Platform detection
 # -------------------------------------------------------------------
@@ -110,7 +143,7 @@ install_via_wsl() {
   info "Running install inside WSL..."
   echo ""
 
-  if ! $wsl_cmd -e bash -c "bash '${wsl_script_path}'"; then
+  if ! $wsl_cmd -e bash -lc "bash '${wsl_script_path}'"; then
     error "WSL installation failed."
     exit 1
   fi
@@ -212,7 +245,7 @@ for i in "$@"; do
     esac
 done
 WSL_CWD="$(convert_win_to_wsl "$(pwd)")"
-wsl -e bash -lc "cd '${WSL_CWD}' 2>/dev/null; export PATH=\"\$HOME/.bun/bin:\$HOME/.codex-orchestrator/bin:\$PATH\"; codex-agent ${ARGS[*]}"
+wsl -e bash -lc "cd '${WSL_CWD}' 2>/dev/null; export PATH=\"\$HOME/.bun/bin:\$HOME/.local/bin:\$HOME/.codex-orchestrator/bin:\$PATH\"; if [ -s \"\$HOME/.nvm/nvm.sh\" ]; then . \"\$HOME/.nvm/nvm.sh\" >/dev/null 2>&1; nvm use --silent default >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1 || true; fi; codex-agent ${ARGS[*]}"
 BRIDGE_EOF
   fi
 
@@ -298,8 +331,10 @@ check_tmux() {
 # Check and install Bun
 # -------------------------------------------------------------------
 check_bun() {
-  if command -v bun &>/dev/null; then
-    success "bun: $(bun --version)"
+  local bun_path
+  bun_path="$(prefer_native_command bun || true)"
+  if [ -n "$bun_path" ] && "$bun_path" --version &>/dev/null; then
+    success "bun: $("$bun_path" --version) ($bun_path)"
     return 0
   fi
 
@@ -315,8 +350,9 @@ check_bun() {
   export BUN_INSTALL="$HOME/.bun"
   export PATH="$BUN_INSTALL/bin:$PATH"
 
-  if command -v bun &>/dev/null; then
-    success "bun installed: $(bun --version)"
+  bun_path="$(prefer_native_command bun || true)"
+  if [ -n "$bun_path" ] && "$bun_path" --version &>/dev/null; then
+    success "bun installed: $("$bun_path" --version) ($bun_path)"
   else
     error "Bun installation failed. Install manually from https://bun.sh"
     exit 1
@@ -327,12 +363,21 @@ check_bun() {
 # Check for OpenAI Codex CLI
 # -------------------------------------------------------------------
 check_codex() {
-  if command -v codex &>/dev/null; then
-    success "codex CLI: found"
+  local codex_path
+  codex_path="$(prefer_native_command codex || true)"
+  if [ -n "$codex_path" ] && "$codex_path" --version &>/dev/null; then
+    success "codex CLI: found ($codex_path)"
     return 0
   fi
 
-  warn "OpenAI Codex CLI not found."
+  if command -v codex &>/dev/null; then
+    local first_codex
+    first_codex="$(command -v codex)"
+    warn "Found codex at $first_codex but it is not usable in this shell"
+    warn "A Windows shim was detected on PATH. Installing a WSL-native version."
+  fi
+
+  warn "OpenAI Codex CLI not found (or not working)."
   echo ""
   echo "The Codex CLI is the coding agent that codex-orchestrator controls."
   echo ""
@@ -348,14 +393,19 @@ check_codex() {
   read -p "Do you want to install it now with npm? [y/N] " -n 1 -r
   echo
   if [[ $REPLY =~ ^[Yy]$ ]]; then
-    if command -v npm &>/dev/null; then
-      npm install -g @openai/codex
-      if command -v codex &>/dev/null; then
-        success "codex CLI installed"
+    local npm_path
+    npm_path="$(prefer_native_command npm || true)"
+    if [ -n "$npm_path" ]; then
+      "$npm_path" install -g @openai/codex
+      codex_path="$(prefer_native_command codex || true)"
+      if [ -n "$codex_path" ] && "$codex_path" --version &>/dev/null; then
+        success "codex CLI installed ($codex_path)"
         echo ""
         warn "You still need to authenticate: codex --login"
       else
         error "Codex CLI installation failed."
+        warn "If you use nvm, ensure a default Node is active for non-interactive shells:"
+        warn "  nvm alias default node"
         exit 1
       fi
     else
@@ -382,7 +432,13 @@ install_orchestrator() {
   fi
 
   info "Installing dependencies..."
-  bun install
+  local bun_path
+  bun_path="$(prefer_native_command bun || true)"
+  if [ -z "$bun_path" ]; then
+    error "bun not found after setup."
+    exit 1
+  fi
+  "$bun_path" install
 
   # Add to PATH
   local BIN_DIR="$INSTALL_DIR/bin"
@@ -449,7 +505,9 @@ verify() {
   echo "  codex-agent capture <jobId>"
   echo ""
 
-  if ! command -v codex &>/dev/null; then
+  local codex_path
+  codex_path="$(prefer_native_command codex || true)"
+  if [ -z "$codex_path" ] || ! "$codex_path" --version &>/dev/null; then
     warn "Reminder: Install the Codex CLI before using codex-agent:"
     echo "  npm install -g @openai/codex"
     echo "  codex --login"
@@ -468,6 +526,10 @@ main() {
 
   detect_platform
   echo ""
+
+  if [ "$PLATFORM" = "linux" ]; then
+    bootstrap_user_path
+  fi
 
    # Windows: delegate to WSL and create bridge shim
   if [ "$PLATFORM" = "windows" ]; then

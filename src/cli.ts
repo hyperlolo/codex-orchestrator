@@ -22,6 +22,7 @@ import {
 } from "./jobs.ts";
 import { loadFiles, formatPromptWithFiles, estimateTokens, loadCodebaseMap } from "./files.ts";
 import { isTmuxAvailable, listSessions } from "./tmux.ts";
+import { resolveNativeCommandPath } from "./env.ts";
 
 const HELP = `
 Codex Agent - Delegate tasks to GPT Codex agents (tmux-based)
@@ -269,8 +270,15 @@ async function main() {
 
         // Check codex
         const { execSync } = await import("child_process");
+        const codexPath = resolveNativeCommandPath("codex");
+        if (!codexPath) {
+          console.error("codex CLI not found");
+          console.error("Install with: npm install -g @openai/codex");
+          process.exit(1);
+        }
+
         try {
-          const version = execSync("codex --version", { encoding: "utf-8" }).trim();
+          const version = execSync(`"${codexPath}" --version`, { encoding: "utf-8" }).trim();
           console.log(`codex: ${version}`);
         } catch {
           console.error("codex CLI not found");

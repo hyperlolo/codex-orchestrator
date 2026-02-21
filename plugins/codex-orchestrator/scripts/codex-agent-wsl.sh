@@ -43,4 +43,4 @@ done
 
 WSL_CWD="$(convert_win_to_wsl "$(pwd)")"
 
-wsl -e bash -lc "cd '${WSL_CWD}' 2>/dev/null; export PATH=\"\$HOME/.bun/bin:\$HOME/.codex-orchestrator/bin:\$PATH\"; codex-agent ${ARGS[*]}"
+wsl -e bash -lc "cd '${WSL_CWD}' 2>/dev/null; export PATH=\"\$HOME/.bun/bin:\$HOME/.local/bin:\$HOME/.codex-orchestrator/bin:\$PATH\"; if [ -s \"\$HOME/.nvm/nvm.sh\" ]; then . \"\$HOME/.nvm/nvm.sh\" >/dev/null 2>&1; nvm use --silent default >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1 || true; fi; codex-agent ${ARGS[*]}"
